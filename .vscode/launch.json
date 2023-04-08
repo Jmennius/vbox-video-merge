@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "vbox-video-merge",
+            "type": "python",
+            "request": "launch",
+            "program": "vbox-video-merge.py",
+            "args": [
+                "--vbox", "NFS Apr 8th.vbo",
+                "--video", "C0234.MP4",
+                "--video-offset-sec", "211.000"
+                ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
