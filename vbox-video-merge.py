@@ -134,7 +134,7 @@ def patch_data(vbox_sections, column_names: list[str], video_number: str, video_
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Merge a video into vbox telemetry file")
     parser.add_argument('--vbox', required=True, help="vbox telemetry file")
-    parser.add_argument('--merged-vbox', help="ourput vbox telemetry file with video merged (defaults to '_video' suffix)")
+    parser.add_argument('--merged-vbox', help="output vbox telemetry file with video merged (defaults to '_video' suffix)")
     parser.add_argument('--video', required=True, help="video file, should be in the same directory")
     parser.add_argument('--video-offset-sec', required=True, type=float, help="Offset in the video where telemetry log starts in ms.")
 
