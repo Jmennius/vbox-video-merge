@@ -7,7 +7,7 @@ from datetime import datetime, time, date, timedelta, timezone
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(format="{levelname:8} {message}", style='{', level=logging.INFO)
 
 
 VBOX_PREAMBLE_SECTION = 'preamble'  # pseudo section that we use to save the preamble
@@ -53,7 +53,7 @@ def write_vbox_sections(vbox_sections: list[str], filename):
 
 
 def patch_headers(vbox_sections):
-    logger.info(f"Patching heads...")
+    logger.info(f"Patching headers...")
     if not 'avifileindex' in vbox_sections[VBOX_HEADER_SECTION]:
         vbox_sections[VBOX_HEADER_SECTION].append('avifileindex')
     if not 'avisynctime' in vbox_sections[VBOX_HEADER_SECTION]:
@@ -155,8 +155,8 @@ def get_probable_offset_from_sony_metadata(telemetry_start_time, metadata_filena
 
     creation_date_element = tree.find(f'{{{SONY_META_XMLNS}}}CreationDate')
     creation_date = datetime.fromisoformat(creation_date_element.attrib['value'])
-    logger.info(f"CreationDate from metadata: {creation_date}")
-    
+    logger.debug(f"CreationDate from metadata: {creation_date}")
+
     # GPS records start a bit later then the video itself
     gps_timestamp_element = tree.find(f"./{{{SONY_META_XMLNS}}}AcquisitionRecord/"
                                       f"{{{SONY_META_XMLNS}}}Group[@name='ExifGPS']/"
@@ -170,7 +170,7 @@ def get_probable_offset_from_sony_metadata(telemetry_start_time, metadata_filena
 
     delta = time_to_timedelta(telemetry_start_time) - time_to_timedelta(creation_date.astimezone(timezone.utc).time())
     delta_sec = delta.seconds + (delta.microseconds / (1000 * 1000) )
-    logger.info(f"Probable offset derived from metadata: {delta_sec}s")
+    logger.info(f"Probable offset derived from video metadata: {delta_sec}s")
     return delta_sec
 
 
@@ -194,24 +194,25 @@ if __name__ == '__main__':
         logger.debug(f"VBox lines read: {len(vbox_lines)}")
 
         vbox_section_contents = read_vbox_sections(vbox_lines)
+        # TODO: print venue and date from comment instead
         logger.info(f"VBox preamble: {vbox_section_contents[VBOX_PREAMBLE_SECTION][0]}")
 
         video_filename_match = re.fullmatch(r'(?P<prefix>[a-zA-Z]+)(?P<number>\d+).(?P<extension>\w+)', args.video)
         video_prefix = video_filename_match.group('prefix')
         video_number = video_filename_match.group('number')
         video_extension = video_filename_match.group('extension')
-        logger.info(f"Video file prefix: {video_prefix}, number: {video_number}, extension: {video_extension}")
+        logger.debug(f"Video file prefix: {video_prefix}, number: {video_number}, extension: {video_extension}")
 
         telemetry_start_time = get_telemetry_start_time(vbox_section_contents,
                                                         get_telemetry_column_names(vbox_section_contents))
-        logger.info(f"Telemetry start time: {telemetry_start_time}")
+        logger.debug(f"Telemetry start time: {telemetry_start_time}")
 
         video_offset_sec = args.video_offset_sec
         if args.guess_offset_from == 'sony-metadata':
             video_offset_sec += get_probable_offset_from_sony_metadata(telemetry_start_time,
                                                                        f"{video_prefix}{video_number}M01.XML")
 
-        logger.info(f"Video offset to be used: {video_offset_sec}")
+        logger.info(f"Video offset to be used: {video_offset_sec}s")
 
         patch_headers(vbox_section_contents)
         telemetry_column_names = patch_column_names(vbox_section_contents)
