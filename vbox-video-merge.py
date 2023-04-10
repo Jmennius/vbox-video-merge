@@ -3,6 +3,8 @@ import argparse
 import logging
 import math
 import re
+from datetime import datetime, time, date, timedelta, timezone
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -59,6 +61,10 @@ def patch_headers(vbox_sections):
     logger.debug(f"New headers: {vbox_sections[VBOX_HEADER_SECTION]}")
 
 
+def get_telemetry_column_names(vbox_sections) -> list[str]:
+    return vbox_sections[VBOX_COLUMN_NAMES_SECTION][0].split()
+
+
 def patch_column_names(vbox_sections) -> list[str]:
     logger.info(f"Patching column names...")
     column_names_list = vbox_sections[VBOX_COLUMN_NAMES_SECTION][0].split()
@@ -77,7 +83,7 @@ def insert_avi_section(vbox_sections, video_prefix: str, video_extension: str):
     logger.debug(f"avi section: {vbox_sections[VBOX_AVI_SECTION]}")
 
 
-def line_time_to_sec(line_time) -> float:
+def line_time_to_sec_and_time(line_time) -> tuple[float, time]:
     """Get time in seconds from line time
     
     Recorded time in each row is not in seconds -
@@ -96,7 +102,15 @@ def line_time_to_sec(line_time) -> float:
 
     line_seconds = int(line_time_integer_part - line_hour * 10000 - line_minutes * 100)
 
-    return line_hour * 60 * 60 +  line_minutes * 60 + line_seconds + line_time_msec / 100
+    seconds_since_midnight = line_hour * 60 * 60 +  line_minutes * 60 + line_seconds + line_time_msec / 100
+
+    return seconds_since_midnight, time(line_hour, line_minutes, line_seconds, line_time_msec * 1000)
+
+
+def get_telemetry_start_time(vbox_sections, column_names: list[str]) -> time:
+    time_col_idx = column_names.index('time')
+    _, start_time = line_time_to_sec_and_time(float(vbox_sections[VBOX_DATA_SECTION][0].split()[time_col_idx]))
+    return start_time
 
 
 def patch_data(vbox_sections, column_names: list[str], video_number: str, video_offset_sec: float):
@@ -107,11 +121,11 @@ def patch_data(vbox_sections, column_names: list[str], video_number: str, video_
     avifileindex_col_idx = column_names.index('avifileindex')
     avisynctime_col_idx = column_names.index('avisynctime')
     
-    initial_time_sec = line_time_to_sec(float(vbox_sections[VBOX_DATA_SECTION][0].split()[time_col_idx]))
+    initial_time_sec, _ = line_time_to_sec_and_time(float(vbox_sections[VBOX_DATA_SECTION][0].split()[time_col_idx]))
 
     for data_line in vbox_sections[VBOX_DATA_SECTION]:
         data_line_elements = data_line.split()
-        line_time_sec = line_time_to_sec(float(data_line_elements[time_col_idx]))
+        line_time_sec, _ = line_time_to_sec_and_time(float(data_line_elements[time_col_idx]))
         line_offset_sec = line_time_sec - initial_time_sec  # offset from beginning of telemetry
 
         line_video_offset_msec = round((video_offset_sec + line_offset_sec) * 1000)
@@ -131,12 +145,44 @@ def patch_data(vbox_sections, column_names: list[str], video_number: str, video_
     vbox_sections[VBOX_DATA_SECTION] = new_data_lines
 
 
+def time_to_timedelta(time_obj: time) -> timedelta:
+    return timedelta(hours=time_obj.hour, minutes=time_obj.minute,
+                     seconds=time_obj.second, microseconds=time_obj.microsecond)
+
+def get_probable_offset_from_sony_metadata(telemetry_start_time, metadata_filename):
+    SONY_META_XMLNS = 'urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.00'
+    tree = ET.parse(metadata_filename)
+
+    creation_date_element = tree.find(f'{{{SONY_META_XMLNS}}}CreationDate')
+    creation_date = datetime.fromisoformat(creation_date_element.attrib['value'])
+    logger.info(f"CreationDate from metadata: {creation_date}")
+    
+    # GPS records start a bit later then the video itself
+    gps_timestamp_element = tree.find(f"./{{{SONY_META_XMLNS}}}AcquisitionRecord/"
+                                      f"{{{SONY_META_XMLNS}}}Group[@name='ExifGPS']/"
+                                      f"{{{SONY_META_XMLNS}}}Item[@name='TimeStamp']")
+    gps_timestamp = time.fromisoformat(gps_timestamp_element.attrib['value'])
+    gps_datestamp_element = tree.find(f"./{{{SONY_META_XMLNS}}}AcquisitionRecord/"
+                                      f"{{{SONY_META_XMLNS}}}Group[@name='ExifGPS']/"
+                                      f"{{{SONY_META_XMLNS}}}Item[@name='DateStamp']")
+    gps_datestamp = date.fromisoformat(gps_datestamp_element.attrib['value'].replace(':', '-'))
+    logger.debug(f"GPS date: {gps_datestamp}, time: {gps_timestamp}")
+
+    delta = time_to_timedelta(telemetry_start_time) - time_to_timedelta(creation_date.astimezone(timezone.utc).time())
+    delta_sec = delta.seconds + (delta.microseconds / (1000 * 1000) )
+    logger.info(f"Probable offset derived from metadata: {delta_sec}s")
+    return delta_sec
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Merge a video into vbox telemetry file")
     parser.add_argument('--vbox', required=True, help="vbox telemetry file")
     parser.add_argument('--merged-vbox', help="output vbox telemetry file with video merged (defaults to '_video' suffix)")
     parser.add_argument('--video', required=True, help="video file, should be in the same directory")
-    parser.add_argument('--video-offset-sec', required=True, type=float, help="Offset in the video where telemetry log starts in ms.")
+    parser.add_argument('--video-offset-sec', type=float, default=0,
+                        help="Offset in the video where telemetry log starts in seconds."
+                             "If guessing is enabled - this is added to the guessed time (can be negative).")
+    parser.add_argument('--guess-offset-from', choices=['sony-metadata'], help="Try to guess video offset from metadata")
 
     args = parser.parse_args()
 
@@ -156,9 +202,20 @@ if __name__ == '__main__':
         video_extension = video_filename_match.group('extension')
         logger.info(f"Video file prefix: {video_prefix}, number: {video_number}, extension: {video_extension}")
 
+        telemetry_start_time = get_telemetry_start_time(vbox_section_contents,
+                                                        get_telemetry_column_names(vbox_section_contents))
+        logger.info(f"Telemetry start time: {telemetry_start_time}")
+
+        video_offset_sec = args.video_offset_sec
+        if args.guess_offset_from == 'sony-metadata':
+            video_offset_sec += get_probable_offset_from_sony_metadata(telemetry_start_time,
+                                                                       f"{video_prefix}{video_number}M01.XML")
+
+        logger.info(f"Video offset to be used: {video_offset_sec}")
+
         patch_headers(vbox_section_contents)
-        column_names = patch_column_names(vbox_section_contents)
+        telemetry_column_names = patch_column_names(vbox_section_contents)
         insert_avi_section(vbox_section_contents, video_prefix, video_extension)
-        patch_data(vbox_section_contents, column_names, video_number, args.video_offset_sec)
+        patch_data(vbox_section_contents, telemetry_column_names, video_number, video_offset_sec)
 
         write_vbox_sections(vbox_section_contents, merged_vbox_filename)

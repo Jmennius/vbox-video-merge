@@ -2,17 +2,33 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "vbox-video-merge",
+            "name": "vbox-video-merge - C0234",
             "type": "python",
             "request": "launch",
             "program": "vbox-video-merge.py",
             "args": [
                 "--vbox", "NFS Apr 8th.vbo",
                 "--video", "C0234.MP4",
-                "--video-offset-sec", "211.000"
+                "--guess-offset-from", "sony-metadata",
+                "--video-offset-sec", "-1.75"
                 ],
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": true,
+            "__manual offset???": "--video-offset-sec 211.000"
+        },
+        {
+            "name": "vbox-video-merge - C0233",
+            "type": "python",
+            "request": "launch",
+            "program": "vbox-video-merge.py",
+            "args": [
+                "--vbox", "NFS C0233.vbo",
+                "--video", "C0233.MP4",
+                "--guess-offset-from", "sony-metadata",
+                "--video-offset-sec", "-2.5"
+                ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
         }
     ]
 }
